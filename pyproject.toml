@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-breeze"
+version = "0.1.9"
+description = "chat manager with extension support"
+authors = [
+    { name = "Niko"},
+    { name = "Sasha"},
+    { name = "Bob Example"}
+]
+dependencies = [
+    "alt-profanity-check",
+    "discord-webhook",
+    "detoxify",
+    "numpy"
+]
+
+[project.entry-points."endstone"]
+breeze = "endstone_breeze:Breeze"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_breeze"]
