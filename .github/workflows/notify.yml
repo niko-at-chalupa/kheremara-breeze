@@ -1,0 +1,61 @@
+name: Nikolandia Notification
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  discord:
+    # run only on push events (skip pull_request)
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send commit info to Nikolandia
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // use the injected `context` variable
+            console.log(context)
+            const commits = (context && context.payload && Array.isArray(context.payload.commits))
+              ? context.payload.commits
+              : []
+            const webhook = process.env.DISCORD_WEBHOOK
+
+            if (!webhook) {
+              console.warn('DISCORD_WEBHOOK not set; skipping notification')
+              return
+            }
+
+            if (commits.length === 0) {
+              console.info('No commits in payload; nothing to send')
+              return
+            }
+
+            for (const c of commits) {
+              const commitID = (c.id || '').substring(0, 7)
+              const formatList = (arr) => (Array.isArray(arr) && arr.length > 0) ? arr.join('\n').substring(0, 1000) : 'none'
+
+              const payload = {
+                embeds: [{
+                  title: 'new commits pushed to Breeze!',
+                  description: `*${c.message}*\n\n\`${commitID}\``,
+                  color: 11763417,
+                  author: {
+                    name: c.author && c.author.name ? c.author.name : 'unknown',
+                    icon_url: c.author && c.author.username ? `https://github.com/${c.author.username}.png` : undefined
+                  }
+                }]
+              }
+
+              await fetch(webhook, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              })
+            }
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
