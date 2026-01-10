@@ -12,5 +12,5 @@ whitelist = [
     "fit", "fist", "ash", "mass", "pass", "sass",
     "mash", "cash", "dash", "lash", "wash", "wish",
     "push", "ship", "shin", "shun", "shook", "base",
-    "blah"
+    "blah", "cay", "hi"
 ]
