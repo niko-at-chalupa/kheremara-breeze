@@ -149,18 +149,18 @@ class BreezeExtensionAPI(): # For extensions to use to interact with Breeze
         self._event_bus._emit("on_breeze_chat_event", event, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_event")
 
         return event, plugin
-        
-    def on_breeze_chat_processed(self, event:PlayerChatEvent, handler, is_bad:bool, plugin:Plugin):
+
+    def on_breeze_chat_processed(self, event:PlayerChatEvent, handler_output: "BreezeExtensionAPI.HandlerOutput", is_bad:bool, plugin:Plugin):
         """Called after Breeze has processed a chat event. Breeze is a dictionary of values from Breeze's message evaluation and stuff. 
         
         Extensions can hook into this to do extra functions but they can NOT modify management."""
         if not self.ready:
             return
 
-        self._event_bus._emit("on_breeze_chat_processed", event, handler, is_bad, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_processed")
+        self._event_bus._emit("on_breeze_chat_processed", event, handler_output, is_bad, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_processed")
 
-        return event, handler, is_bad, plugin
-
+        return event, handler_output, is_bad, plugin
+    
     def initialize(self, plugin_instance: Plugin):
         self.plugin = plugin_instance
         self.ready = True
@@ -188,15 +188,11 @@ class BreezeModuleManager():
         self.handler_state = self.HandlerState.NONE
         self.handler = None
 
-    def _default_handler(self, plugin: "Breeze", event:PlayerChatEvent):
-        plugin.bea.on_breeze_chat_event(event, plugin)
+    def _default_handler(self, handler_input: BreezeExtensionAPI.HandlerInput, player_data_manager: PlayerDataManager, breeze_text_processing: BreezeTextProcessing) -> BreezeExtensionAPI.HandlerOutput:
+        sender_uuid = str(handler_input["player"].unique_id)
+        finished_message = handler_input["message"]
 
-        sender_uuid = str(event.player.unique_id)
-        finished_message = event.message
-
-        event.cancel()
-
-        local_player_data = plugin.pdm.get_player_data(event.player.name)
+        local_player_data = player_data_manager.get_player_data(handler_input["player"].name)
         is_bad = False
         fully_cancel_message = (False, "")
         caught = []
@@ -207,54 +203,32 @@ class BreezeModuleManager():
         if time.monotonic() - local_player_data["latest_time_a_message_was_sent"] < 0.5:
             fully_cancel_message = (True, "spam, gave displayed cancel")
             should_check_message = False
-            event.player.send_message("You're sending messages too fast!")
+            handler_input["player"].send_message("You're sending messages too fast!")
 
         if fully_cancel_message[0]:
             should_check_message = False
         
         if should_check_message: 
-            finished_message, is_bad, caught = plugin.btp.check_and_censor(event.message)
+            finished_message, is_bad, caught = breeze_text_processing.check_and_censor(handler_input["message"])
 
         # finally, after checking send the message and some extra stuff
         if is_bad:
             worthy_to_log = True
 
         if not fully_cancel_message[0]:
-            plugin.server.broadcast_message(f"<{event.player.name}> {finished_message}")
+            pass
         else:
             if randint(1, 3) == 1:
                 worthy_to_log = True
 
-        plugin.pdm.update_player_data(event.player.name, event.message)
+        player_data_manager.update_player_data(handler_input["player"].name, handler_input["message"])
 
-        plugin.bea.on_breeze_chat_processed(event, {
+        return {
             "is_bad": is_bad,
-            "fully_cancel_message": fully_cancel_message,
-            "should_check_message": should_check_message,
-            "caught": caught,
+            "fully_cancel_message": fully_cancel_message[0],
             "finished_message": finished_message,
-            "worthy_to_log": worthy_to_log,
-            "sender_uuid": sender_uuid,
-            "sender_name": event.player.name,
-            "original_message": event.message
-        }, is_bad, plugin)
-        
-        if worthy_to_log:
-            plugin.logger.info(f"""\n
-    --- BREEZE LOG OF MESSAGE FROM {sender_uuid} / {event.player.name} ---
-    message
-    | is_bad = {ColorFormat.BLUE}{is_bad}{ColorFormat.RESET}
-    | fully_cancel_message = {ColorFormat.BLUE}{fully_cancel_message}{ColorFormat.RESET}
-    | should_check_message = {ColorFormat.BLUE}{should_check_message}{ColorFormat.RESET}
-
-    censoring
-    | tokens = {ColorFormat.BLUE}{split_into_tokens(event.message)}{ColorFormat.RESET}
-    | caught = {ColorFormat.BLUE}{caught}{ColorFormat.RESET}
-    
-    input) {ColorFormat.BLUE}{event.message}{ColorFormat.RESET}
-    output) {ColorFormat.BLUE}{finished_message}{ColorFormat.RESET}\n
-    --- END OF LOG ---
-        """)
+            "original_message": handler_input["message"]
+        }
             
     def _initialize_kherimoya(self):
         if self.is_kherimoya:
@@ -417,14 +391,29 @@ class Breeze(Plugin): #PLUGIN
         self.pdm = PlayerDataManager()
         self.btp = BreezeTextProcessing()
 
-    def handle(self, event):
-        if not self.bmm.handler == None:
-            try:
-                self.bmm.handler(plugin=self, event=event)
-            except Exception as e:
-                self.logger.error(f"Exception while handling message, falling back to default handler: {e}")
-                self.bmm._default_handler(plugin=self, event=event)
+    def handle(self, handler_input: BreezeExtensionAPI.HandlerInput) -> BreezeExtensionAPI.HandlerOutput:
+        raw = None
+        try:
+            if self.bmm.handler is None:
+                self.logger.warning("No handler found, using default handler")
+                raw = self.bmm._default_handler(handler_input=handler_input, player_data_manager=self.pdm, breeze_text_processing=self.btp)
+            else:
+                raw = self.bmm.handler(handler_input=handler_input, player_data_manager=self.pdm, breeze_text_processing=self.btp)
+        except Exception as e:
+            self.logger.error(f"Exception while handling message: {e}")
+            raw = self.bmm._default_handler(handler_input=handler_input, player_data_manager=self.pdm, breeze_text_processing=self.btp)
+        
+        if not isinstance(raw, dict):
+            self.logger.warning("handler returned non-dict, falling back to default")
+            raw = self.bmm._default_handler(handler_input=handler_input, player_data_manager=self.pdm, breeze_text_processing=self.btp)
 
+        for key in ["is_bad", "fully_cancel_message", "finished_message", "original_message"]:
+            if key not in raw:
+                self.logger.warning(f"handler output missing key '{key}', filling default")
+                raw[key] = None  # or some sane default
+        
+        return cast(BreezeExtensionAPI.HandlerOutput, raw)
+    
     @event_handler
     def on_player_quit(self, event: PlayerQuitEvent):
         player = event.player
@@ -439,4 +428,19 @@ class Breeze(Plugin): #PLUGIN
     @event_handler(priority=EventPriority(1))
     def on_chat_sent_by_player(self, event: PlayerChatEvent):
         event.cancel()
-        self.handle(event)
+        self.bea.eventbus._emit("on_breeze_chat_event", event, self)
+
+        h_input: BreezeExtensionAPI.HandlerInput = {
+            "message": event.message,
+            "player": event.player,
+            "chat_format": event.format,
+            "recipients": event.recipients
+        }
+
+        handled = self.handle(h_input)
+
+        self.bea.eventbus._emit("on_breeze_chat_processed", event, handled, handled["is_bad"], self)
+
+        if handled["fully_cancel_message"]:
+            return
+        self.server.broadcast_message(handled["finished_message"])

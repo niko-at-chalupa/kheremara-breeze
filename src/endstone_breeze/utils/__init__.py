@@ -12,12 +12,6 @@ from .general_utils import (
 )
 
 __all__ = [
-    # detox
-    "detoxify_text",
-    "round_and_dict_to_list",
-    "is_toxic_text",
-    "is_toxic_text_advanced",
-
     # profanity
     "ProfanityFilter",
     "ProfanityCheck",
