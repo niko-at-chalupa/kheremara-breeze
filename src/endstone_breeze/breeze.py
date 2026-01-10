@@ -443,4 +443,4 @@ class Breeze(Plugin): #PLUGIN
 
         if handled["fully_cancel_message"]:
             return
-        self.server.broadcast_message(handled["finished_message"])
+        self.server.broadcast_message(f"<{event.player.name}> {handled["finished_message"]}")
