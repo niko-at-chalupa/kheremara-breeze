@@ -2,6 +2,8 @@ from endstone import ColorFormat, scheduler
 from endstone.event import event_handler, PlayerJoinEvent, PlayerChatEvent, PlayerQuitEvent, EventPriority
 from endstone.plugin import Plugin
 import endstone
+import importlib.resources as resources
+from importlib.resources import files
 
 from .utils.profanity_utils import ProfanityCheck, ProfanityLonglist, ProfanityExtralist
 pc = ProfanityCheck()
@@ -15,13 +17,6 @@ import os, time, asyncio, inspect, importlib.util, sys, threading
 from collections import defaultdict
 from pathlib import Path
 from typing import TypedDict, cast
-
-def is_kherimoya_environment() -> bool: # simply checks if the four folders Kherimoya makes upon creating a server are present. The reason why we check for JUST the folders, is so that people can make Kherimoya-like environments by just making the folders themselves.
-    kherimoya_paths = ['../state','../server','../extra','../config']
-    for path_str in kherimoya_paths:
-        if not Path(path_str).is_dir():
-            return False
-    return True
 
 class PlayerData(TypedDict):
     latest_time_a_message_was_sent: float
@@ -166,6 +161,7 @@ class BreezeExtensionAPI(): # For extensions to use to interact with Breeze
         self.ready = True
 
 class BreezeModuleManager():
+    """internal infrasturcture for managing Breeze modules like extensions and handlers"""
     bea: BreezeExtensionAPI
     pdm: PlayerDataManager
     btp: BreezeTextProcessing
@@ -176,7 +172,6 @@ class BreezeModuleManager():
             CUSTOM = 2
 
     def __init__(self, logger: endstone.Logger, pdm: PlayerDataManager, btp: BreezeTextProcessing, use_cwd_for_extra=False):
-        self.is_kherimoya = is_kherimoya_environment()
         self.use_cwd_for_extra = use_cwd_for_extra
         self.is_breeze_installed = False
         self.breeze_installation_path = None
@@ -230,41 +225,45 @@ class BreezeModuleManager():
             "original_message": handler_input["message"]
         }
             
-    def _initialize_kherimoya(self):
-        if self.is_kherimoya:
-            path_str = "../extra/breeze/"
-            self.breeze_installation_path = Path(path_str).resolve()
-            
-            if not Path(path_str).is_dir():
-                os.makedirs(Path(path_str) / "extensions", exist_ok=True)
-                self.is_breeze_installed = True
-            else:
-                self.is_breeze_installed = True
-                
-            print(f"{ColorFormat.LIGHT_PURPLE}Breeze was installed from the Kherimoya path: {path_str}. REMEMBER THIS!!")
-        elif self.use_cwd_for_extra:
-            cwd_extra_path_str = "./extra/breeze/"
-            if not Path(cwd_extra_path_str).is_dir():
-                if Path(os.getcwd()) == Path.home():
-                    self.logger.warning("BreezeModuleManager: Hey! You're running the server from your home directory, so Breeze will not create the extra/breeze/ folder here for safety reasons. Please run the server from a different directory if you want to use Breeze's extra features.")
-                    return
-                os.makedirs(Path(cwd_extra_path_str) / "extensions", exist_ok=True)
-                self.is_breeze_installed = True
-            else:
-                self.is_breeze_installed = True
-    
-            self.breeze_installation_path = Path(cwd_extra_path_str).resolve()
-            self.logger.info(f"{ColorFormat.LIGHT_PURPLE}Breeze was installed from the CWD path: {self.breeze_installation_path}. REMEMBER THIS!!")
-        
-        if self.is_breeze_installed:
-            pass
-        else:
-            self.logger.error("BreezeModuleManager: We're likely not in a Kherimoya-like environment, so extensions and other stuff will not be loaded.")
+    def _install_breeze(self, path: Path):
+        self.breeze_installation_path = Path(path).resolve()
 
+        if not path.is_dir():
+            os.makedirs(path / "extensions", exist_ok=True)
+            os.makedirs(path / "types", exist_ok=True)
+            self.is_breeze_installed = True
+        else:
+            os.makedirs(path / "extensions", exist_ok=True)
+            os.makedirs(path / "types", exist_ok=True)
+            self.is_breeze_installed = True
+
+        try:
+            # import & write resource files
+            resource_files = files("endstone_breeze").joinpath("resources")
+            
+            types_pyi_content = resource_files.joinpath("types.pyi").read_text()
+            types_output_path = self.breeze_installation_path / "types" / "types.pyi"
+            
+            with open(types_output_path, "w") as f:
+                f.write(types_pyi_content)
+            
+            self.logger.info(f"[BreezeModuleManager] Installed types.pyi to {types_output_path}")
+            
+            init_pyi_content = resource_files.joinpath("__init__.pyi").read_text()
+            init_output_path = self.breeze_installation_path / "extensions" / "__init__.pyi"
+            
+            with open(init_output_path, "w") as f:
+                f.write(init_pyi_content)
+            
+            self.logger.info(f"[BreezeModuleManager] Installed __init__.pyi to {init_output_path}")
+        except Exception as e:
+            self.logger.error(f"[BreezeModuleManager] Failed to install type resources: {e}")
+
+            
     def _find_extensions(self):
         if self.is_breeze_installed and self.breeze_installation_path is not None:
             extensions_path = self.breeze_installation_path / "extensions"
-            extension_files = [f for f in os.listdir(extensions_path) if Path(f).suffix == ".py"]
+            extension_files = [f for f in os.listdir(extensions_path) if Path(f).suffix == ".py" and not f.startswith("__") and not Path(f).suffix == ".pyi"]
 
             if "handler.py" in extension_files:
                 module_name = "handler"
@@ -337,8 +336,8 @@ class BreezeModuleManager():
         except Exception as e:
             self.logger.error(f"BreezeModuleManager: Failed to load extension {extension_filename}: {e}")
 
-    def start(self):
-        self._initialize_kherimoya()
+    def start(self, path):
+        self._install_breeze(path)
 
         # Extensions
         if self.is_breeze_installed:
@@ -355,7 +354,7 @@ class BreezeModuleManager():
             self.handler_state = self.HandlerState.DEFAULT
 
         if self.handler_state == self.HandlerState.DEFAULT:
-            self.logger.info("[BreezeModuleManager] We're using Breeze's basic, default handler...")
+            pass
         else:
             self.logger.info("[BreezeModuleManager] Using custom handler.") 
 
@@ -367,6 +366,7 @@ class Breeze(Plugin): #PLUGIN
 
     def on_enable(self) -> None:
         self.logger.info("Enabling Breeze")
+        self.installation_path = Path(self.data_folder).resolve()
         self.register_events(self)
         current_directory = os.getcwd()
         self.server.logger.info(f"{current_directory}, {__file__}")
@@ -374,16 +374,9 @@ class Breeze(Plugin): #PLUGIN
         # pdm and btp are re-passed to the extension API
         self.logger.info('extensionapiing'); self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp); self.bea.initialize(self)
 
-        self.logger.info('modulemanagering'); self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp); self.bmm.start()
+        self.logger.info('modulemanagering'); self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp); self.bmm.start(self.installation_path)
 
-        self.is_kherimoya = is_kherimoya_environment()
-
-        if self.is_kherimoya:
-            self.logger.info('Full Kherimoya(-like) environment detected! All features are ready!')
-        elif self.bmm.use_cwd_for_extra and self.bmm.is_breeze_installed:
-            self.logger.info('Breeze was properly installed in the current working directory!! All features ready!')
-        else:
-            self.logger.warning("Breeze was not installed.")
+        
 
     def __init__(self):
         super().__init__()

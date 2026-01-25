@@ -2,3 +2,4 @@ venv*
 .vscode/
 dist/*
 **DS_Store
+endstone/ 
