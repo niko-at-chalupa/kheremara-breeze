@@ -33,9 +33,9 @@ Soon!
 > ## BreezeExtensionAPI
 > `BreezeExtensionAPI` is mostly for extensions, not handlers.
 >
-> **More information on what extensions may use this for in the extensions part**
+> **More information on what extensions may use this for in the extensions section**
 >
-> The plugin's `BreezeExtensionAPI` object can be accessed through `plugin.bea`, and the `bea` parameter of `on_load` in extensions. **Handlers cannot access the plugin’s `BreezeExtensionAPI` object directly**. *This keeps handlers isolated from extension hooks and internal event flows. 
+> The plugin's `BreezeExtensionAPI` object can be accessed through `plugin.bea`, and the `bea` parameter of `on_load` in extensions. **Handlers cannot access the plugin’s `BreezeExtensionAPI` object directly**. *This keeps handlers isolated from extension hooks and internal event flows. Instead, use BreezeHandlerAPI*
 >
 > *Handlers **do** use `BreezeExtensionAPI` for its `HandlerInput` and `HandlerOutput` `TypedDicts`.*
 >
@@ -71,7 +71,7 @@ Soon!
 > original_message | `str` | The original message before any processing *(e.g., "[tag] <player> i hate you!")*
 >
 > <code><h3>run_task</h3></code>
-> Runs a task in the server's main thread with the plugin. Must be ran from the plugin's instance of BreezeExtensionAPI.
+> Runs a task in the server's main thread with the plugin. Must be ran from the plugin's instance of `BreezeExtensionAPI`.
 >
 > <details><summary>Example code</summary>
 >
@@ -98,8 +98,19 @@ Soon!
 >     # run over and over again
 >     bea.run_task(lambda: broadcast_message(bea.plugin, "I'm sent every 50 ticks"), period=50)
 > ```
->
 > </details>
+>
+> <code><h3>submit</h3></code>
+> Runs a coroutine in the background. Use `run_task` if you're doing anything that needs to be done in the main server thread in a coroutine ran in this scope.
+
+> ## BreezeHandlerAPI
+> Like `BreezeExtensionAPI`, but solely for handlers.
+>
+> <code><h3>run_task</h3></code>
+> Runs a task in the server's main thread with the plugin. Must be ran from the plugin's instance of `BreezeHandlerAPI`. Identical to `BreezeExtensionAPI`'s `run_task`.
+>
+> <code><h3>submit</h3></code>
+> Runs a coroutine in the background. Use `run_task` if you're doing anything that needs to be done in the main server thread in a coroutine ran in this scope. Identical to `BreezeExtensionAPI`'s `submit`.
 
 > ## HANDLERS
 > Handlers define how messages are *handled*.
@@ -117,13 +128,13 @@ Soon!
 >from typing import TYPE_CHECKING
 >
 >if TYPE_CHECKING: # The following are only stubs for typehints. They should only be imported for type checking
->    from extensions import BreezeTextProcessing, PlayerDataManager, BreezeExtensionAPI #type: ignore
+>    from extensions import BreezeTextProcessing, PlayerDataManager, BreezeExtensionAPI, BreezeHandlerAPI #type: ignore
 >
 >import time
 >from random import randint
 >
 ># handlers must have a handler function
->def handler(handler_input: "BreezeExtensionAPI.HandlerInput", player_data_manager: "PlayerDataManager", breeze_text_processing: "BreezeTextProcessing") -> "BreezeExtensionAPI.HandlerOutput":
+>def handler(handler_input: "BreezeExtensionAPI.HandlerInput", player_data_manager: "PlayerDataManager", breeze_text_processing: "BreezeTextProcessing", handler_api: "BreezeHandlerAPI | None" = None) -> "BreezeExtensionAPI.HandlerOutput":
 >    # player_data_manager is an instance of PlayerDataManager used by the server. It can be used to get and update player data.
 >    # The server will automatically add/remove player data from it
 >    
