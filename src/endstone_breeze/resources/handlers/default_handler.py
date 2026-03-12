@@ -5,13 +5,13 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from extensions import BreezeTextProcessing, PlayerDataManager, BreezeExtensionAPI #type: ignore
+    from extensions import BreezeTextProcessing, PlayerDataManager, BreezeExtensionAPI, BreezeHandlerAPI #type: ignore
 
 import time
 from random import randint
 
 # handles messages
-def handler(handler_input: "BreezeExtensionAPI.HandlerInput", player_data_manager: "PlayerDataManager", breeze_text_processing: "BreezeTextProcessing") -> "BreezeExtensionAPI.HandlerOutput":
+def handler(handler_input: "BreezeExtensionAPI.HandlerInput", player_data_manager: "PlayerDataManager", breeze_text_processing: "BreezeTextProcessing", handler_api: "BreezeHandlerAPI | None" = None) -> "BreezeExtensionAPI.HandlerOutput":
     # player_data_manager is an instance of PlayerDataManager used by the server. It can be used to get and update player data.
     # The server will automatically add/remove player data from it
     
