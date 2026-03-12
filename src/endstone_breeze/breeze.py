@@ -8,6 +8,8 @@ from endstone.event import (
     EventPriority,
     PlayerCommandEvent,
 )
+import concurrent.futures
+from typing import Awaitable, Optional
 from endstone.plugin import Plugin
 import endstone
 from importlib.resources import files
@@ -17,7 +19,6 @@ from enum import Enum
 from random import randint
 import os
 import time
-import asyncio
 import inspect
 import importlib.util
 import sys
@@ -25,6 +26,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TypedDict, cast, Callable
 import yaml
+from endstone import asyncio
+import typing
+
+_T = typing.TypeVar("_T")
 
 pc = ProfanityCheck()
 pl = ProfanityList()
@@ -196,6 +201,7 @@ class BreezeModuleManager:
         handler_input: "BreezeExtensionAPI.HandlerInput",
         player_data_manager: PlayerDataManager,
         breeze_text_processing: BreezeTextProcessing,
+        handler_api: "BreezeHandlerAPI | None" = None
     ) -> "BreezeExtensionAPI.HandlerOutput":
         finished_message = handler_input["message"]
 
@@ -365,6 +371,9 @@ class BreezeModuleManager:
 
                     module = importlib.util.module_from_spec(spec)
                     sys.modules[module_name] = module
+                    handler_dir = str(extensions_path / "handlers") 
+                    if handler_dir not in sys.path:                   
+                        sys.path.insert(0, handler_dir)               
                     spec.loader.exec_module(module)
                     handler_func = getattr(module, "handler", None)
 
@@ -483,7 +492,7 @@ class BreezeExtensionAPI:
             for func in list(self.listeners.get(event_name, [])):
                 try:
                     if inspect.iscoroutinefunction(func):
-                        asyncio.run(func(*args, **kwargs))
+                        asyncio.submit(func(*args, **kwargs))
                     else:
                         func(*args, **kwargs)
                 except Exception as e:
@@ -576,6 +585,29 @@ class BreezeExtensionAPI:
 
         self.plugin.server.scheduler.run_task(self.plugin, task, delay, period)
 
+    def submit(self, coro: Awaitable[_T]) -> concurrent.futures.Future[_T]:
+        """
+        Submit an awaitable to the background loop, returns a concurrent.futures.Future.
+
+        Wrapper for Endstone's asyncio.submit()
+        """
+        return asyncio.submit(coro)
+    
+class BreezeHandlerAPI:
+    def __init__(self, bea: BreezeExtensionAPI):
+        self._bea = bea
+
+    def submit(self, coro: Awaitable[_T]) -> concurrent.futures.Future[_T]:
+        """
+        Submit an awaitable to the background loop, returns a concurrent.futures.Future.
+
+        Wrapper for Endstone's asyncio.submit()
+        """
+        return self._bea.submit(coro)
+
+    def run_task(self, task: Callable[[], None], delay: int = 0, period: int = 0):
+        """Wrapper for the task scheduler's run_task method. Use this to run things in the server's thread."""
+        self._bea.run_task(task, delay, period)
 
 class Breeze(Plugin):  # PLUGIN
     def on_enable(self) -> None:
@@ -587,6 +619,7 @@ class Breeze(Plugin):  # PLUGIN
 
         self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp, plugin=self); self.bmm.start(self.installation_path)
         self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp, bmm=self.bmm, plugin=self); self.bea._load_extensions() 
+        self.bha = BreezeHandlerAPI(self.bea)
 
         self._has_load_failed = False
 
@@ -613,48 +646,48 @@ class Breeze(Plugin):  # PLUGIN
             self.logger.error("Since certain handlers, extensions may not work, and disable_chat_on_extension_load_error is set to true in the config, chat is now disabled")
 
     def handle(self, handler_input: BreezeExtensionAPI.HandlerInput) -> BreezeExtensionAPI.HandlerOutput:
+        bha = BreezeHandlerAPI(self.bea)
         raw = None
+
+        def call_default():
+            return self.bmm._default_handler(
+                handler_input=handler_input,
+                player_data_manager=self.pdm,
+                breeze_text_processing=self.btp,
+                handler_api=bha,
+            )
+
         try:
             if self.bmm.handler is None:
                 self.logger.warning("No handler found, using default handler")
-                raw = self.bmm._default_handler(
-                    handler_input=handler_input,
-                    player_data_manager=self.pdm,
-                    breeze_text_processing=self.btp,
-                )
+                raw = call_default()
             else:
-                raw = self.bmm.handler(
-                    handler_input=handler_input,
-                    player_data_manager=self.pdm,
-                    breeze_text_processing=self.btp,
-                )
+                sig = inspect.signature(self.bmm.handler)
+                if "handler_api" in sig.parameters:
+                    raw = self.bmm.handler(
+                        handler_input=handler_input,
+                        player_data_manager=self.pdm,
+                        breeze_text_processing=self.btp,
+                        handler_api=bha,
+                    )
+                else:
+                    raw = self.bmm.handler(
+                        handler_input=handler_input,
+                        player_data_manager=self.pdm,
+                        breeze_text_processing=self.btp,
+                    )
         except Exception as e:
             self.logger.error(f"Exception while handling message: {e}")
-            raw = self.bmm._default_handler(
-                handler_input=handler_input,
-                player_data_manager=self.pdm,
-                breeze_text_processing=self.btp,
-            )
+            raw = call_default()
 
         if not isinstance(raw, dict):
             self.logger.warning("handler returned non-dict, falling back to default")
-            raw = self.bmm._default_handler(
-                handler_input=handler_input,
-                player_data_manager=self.pdm,
-                breeze_text_processing=self.btp,
-            )
+            raw = call_default()
 
-        for key in [
-            "is_bad",
-            "fully_cancel_message",
-            "finished_message",
-            "original_message",
-        ]:
+        for key in ["is_bad", "fully_cancel_message", "finished_message", "original_message"]:
             if key not in raw:
-                self.logger.warning(
-                    f"handler output missing key '{key}', filling default"
-                )
-                raw[key] = None  # or some sane default
+                self.logger.warning(f"handler output missing key '{key}', filling default")
+                raw[key] = None
 
         return cast(BreezeExtensionAPI.HandlerOutput, raw)
 
